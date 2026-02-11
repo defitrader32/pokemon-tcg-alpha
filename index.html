@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PokéAlpha — TCG Market Intelligence</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+  <style>
+    body { background: #030712; color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; }
+    /* Custom Tailwind extensions for gray-950 etc */
+    .bg-gray-950 { background-color: #030712; }
+    .bg-gray-900 { background-color: #111827; }
+    .bg-gray-800 { background-color: #1f2937; }
+    .border-gray-800 { border-color: #1f2937; }
+    .border-gray-700 { border-color: #374151; }
+    .text-gray-100 { color: #f3f4f6; }
+    .text-gray-300 { color: #d1d5db; }
+    .text-gray-400 { color: #9ca3af; }
+    .text-gray-500 { color: #6b7280; }
+    .text-gray-600 { color: #4b5563; }
+    .text-gray-700 { color: #374151; }
+    .rounded-2xl { border-radius: 1rem; }
+    .rounded-xl { border-radius: 0.75rem; }
+    input:focus, select:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; }
+    .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .backdrop-blur-xl { backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+    select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.75rem center; padding-right: 2rem; }
+    .accent-indigo-500::-webkit-slider-thumb { background: #6366f1; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    /* Gradient utilities */
+    .from-indigo-500\/10 { --tw-gradient-from: rgba(99,102,241,0.1); }
+    .from-amber-500\/10 { --tw-gradient-from: rgba(245,158,11,0.1); }
+    .from-yellow-500\/10 { --tw-gradient-from: rgba(234,179,8,0.1); }
+    .from-red-500\/10 { --tw-gradient-from: rgba(239,68,68,0.1); }
+    .from-blue-500\/10 { --tw-gradient-from: rgba(59,130,246,0.1); }
+    .from-amber-500\/10 { --tw-gradient-from: rgba(245,158,11,0.1); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback } = React;
+
+    // Custom SVG Chart Components (no Recharts dependency)
+    const SimpleSparkline = ({ data, dataKey, width = 300, height = 80, color = "#34D399", fillOpacity = 0.15 }) => {
+      if (!data || data.length < 2) return null;
+      const values = data.map(d => d[dataKey]).filter(v => v != null);
+      if (values.length < 2) return null;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min || 1;
+      const points = values.map((v, i) => {
+        const x = (i / (values.length - 1)) * width;
+        const y = height - ((v - min) / range) * (height * 0.85) - height * 0.05;
+        return `${x},${y}`;
+      });
+      const pathD = "M" + points.join(" L");
+      const areaD = pathD + ` L${width},${height} L0,${height} Z`;
+      const gradId = "sg-" + Math.random().toString(36).substr(2,6);
+      return (
+        <svg viewBox={`0 0 ${width} ${height}`} style={{width:"100%",height:"100%"}} preserveAspectRatio="none">
+          <defs><linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={fillOpacity}/><stop offset="100%" stopColor={color} stopOpacity={0}/></linearGradient></defs>
+          <path d={areaD} fill={`url(#${gradId})`} />
+          <path d={pathD} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        </svg>
+      );
+    };
+
+    const DualAreaChart = ({ data, width = 600, height = 280 }) => {
+      if (!data || data.length < 2) return null;
+      const tcgVals = data.map(d => d.tcgplayer).filter(v => v != null);
+      const ebayVals = data.map(d => d.ebaySold).filter(v => v != null);
+      const allVals = [...tcgVals, ...ebayVals];
+      const min = Math.min(...allVals);
+      const max = Math.max(...allVals);
+      const range = max - min || 1;
+      const pad = { top: 20, right: 10, bottom: 30, left: 50 };
+      const w = width - pad.left - pad.right;
+      const h = height - pad.top - pad.bottom;
+      const toX = (i) => pad.left + (i / (data.length - 1)) * w;
+      const toY = (v) => pad.top + h - ((v - min) / range) * h;
+      const makePath = (vals) => vals.map((v, i) => `${i === 0 ? "M" : "L"}${toX(i)},${toY(v)}`).join(" ");
+      const makeArea = (vals) => makePath(vals) + ` L${toX(vals.length-1)},${pad.top+h} L${pad.left},${pad.top+h} Z`;
+      const ticks = 5;
+      const yTicks = Array.from({length: ticks}, (_, i) => min + (range * i / (ticks - 1)));
+      return (
+        <svg viewBox={`0 0 ${width} ${height}`} style={{width:"100%",height:"100%"}}>
+          <defs>
+            <linearGradient id="tcgG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#34D399" stopOpacity={0.15}/><stop offset="100%" stopColor="#34D399" stopOpacity={0}/></linearGradient>
+            <linearGradient id="ebayG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#60A5FA" stopOpacity={0.1}/><stop offset="100%" stopColor="#60A5FA" stopOpacity={0}/></linearGradient>
+          </defs>
+          {yTicks.map((t, i) => <g key={i}><line x1={pad.left} y1={toY(t)} x2={width-pad.right} y2={toY(t)} stroke="#1F2937" strokeDasharray="3 3"/><text x={pad.left-8} y={toY(t)+4} fill="#4B5563" fontSize="11" textAnchor="end">${t.toFixed(0)}</text></g>)}
+          {data.filter((_,i) => i % Math.max(1, Math.floor(data.length/6)) === 0).map((d,i) => <text key={i} x={toX(data.indexOf(d))} y={height-8} fill="#4B5563" fontSize="10" textAnchor="middle">{d.date}</text>)}
+          <path d={makeArea(tcgVals)} fill="url(#tcgG)"/>
+          <path d={makePath(tcgVals)} fill="none" stroke="#34D399" strokeWidth="2"/>
+          {ebayVals.length > 0 && <><path d={makeArea(ebayVals)} fill="url(#ebayG)"/><path d={makePath(ebayVals)} fill="none" stroke="#60A5FA" strokeWidth="1.5" strokeDasharray="4 2"/></>}
+        </svg>
+      );
+    };
+
+    const RadarScoreChart = ({ data, size = 220 }) => {
+      const cx = size/2, cy = size/2, r = size * 0.38;
+      const n = data.length;
+      const angleStep = (Math.PI * 2) / n;
+      const getPoint = (i, val) => {
+        const angle = angleStep * i - Math.PI / 2;
+        const dist = (val / 100) * r;
+        return { x: cx + Math.cos(angle) * dist, y: cy + Math.sin(angle) * dist };
+      };
+      const rings = [0.25, 0.5, 0.75, 1];
+      const polyPoints = data.map((d, i) => { const p = getPoint(i, d.value); return `${p.x},${p.y}`; }).join(" ");
+      return (
+        <svg viewBox={`0 0 ${size} ${size}`} style={{width:"100%",height:size}}>
+          {rings.map((s, i) => <polygon key={i} points={data.map((_, j) => { const a = angleStep*j-Math.PI/2; return `${cx+Math.cos(a)*r*s},${cy+Math.sin(a)*r*s}`; }).join(" ")} fill="none" stroke="#374151" strokeWidth="0.5"/>)}
+          {data.map((_, i) => { const a = angleStep*i-Math.PI/2; return <line key={i} x1={cx} y1={cy} x2={cx+Math.cos(a)*r} y2={cy+Math.sin(a)*r} stroke="#374151" strokeWidth="0.5"/>; })}
+          <polygon points={polyPoints} fill="#818CF8" fillOpacity={0.2} stroke="#818CF8" strokeWidth="2"/>
+          {data.map((d, i) => { const a = angleStep*i-Math.PI/2; const lx = cx+Math.cos(a)*(r+18); const ly = cy+Math.sin(a)*(r+18); return <text key={i} x={lx} y={ly} fill="#9CA3AF" fontSize="11" textAnchor="middle" dominantBaseline="middle">{d.metric}</text>; })}
+        </svg>
+      );
+    };
+
+    // Lucide icons as simple SVG components
+    const Icon = ({ name, className = "w-4 h-4", style }) => {
+      const icons = {
+        search: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+        "trending-up": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+        "trending-down": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>,
+        star: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
+        "star-off": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
+        zap: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+        "message-circle": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>,
+        youtube: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19.1c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/></svg>,
+        "alert-triangle": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+        "chevron-right": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><polyline points="9 18 15 12 9 6"/></svg>,
+        "arrow-up-right": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>,
+        "arrow-down-right": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><line x1="7" y1="7" x2="17" y2="17"/><polyline points="17 7 17 17 7 17"/></svg>,
+        layers: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
+        newspaper: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/></svg>,
+        settings: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+        x: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+        clock: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+        "dollar-sign": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+        activity: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+        target: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>,
+        flame: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>,
+        shield: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+        award: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>,
+        "bar-chart-3": <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>,
+      };
+      return icons[name] || <span>?</span>;
+    };
+
+    // ============================================================
+    // SCORING ALGORITHM (same as JSX)
+    // ============================================================
+    const calculatePriceAlpha = (card) => {
+      const { currentPrice, avg30d, avg90d, low52w, high52w, sources } = card.pricing;
+      let score = 50;
+      if (avg30d) { score += Math.min(25, Math.max(-25, ((avg30d - currentPrice) / avg30d) * 100 * 1.5)); }
+      if (avg90d) { score += Math.min(15, Math.max(-15, ((avg90d - currentPrice) / avg90d) * 100 * 0.8)); }
+      const rangePct = high52w > low52w ? ((currentPrice - low52w) / (high52w - low52w)) * 100 : 50;
+      if (rangePct < 30) score += 10; else if (rangePct > 80) score -= 10;
+      if (sources) {
+        const prices = Object.values(sources).filter(Boolean);
+        if (prices.length > 1) { const spread = (Math.max(...prices) - Math.min(...prices)) / Math.min(...prices) * 100; if (spread > 15) score += 5; }
+      }
+      return Math.max(0, Math.min(100, Math.round(score)));
+    };
+    const calculateSentimentScore = (card) => {
+      const { redditMentions, redditSentiment, youtubeMentions, trendDirection } = card.sentiment;
+      let score = 50;
+      score += Math.min(20, (redditMentions / 10) * 5);
+      score += (redditSentiment - 0.5) * 40;
+      score += Math.min(10, (youtubeMentions / 5) * 3);
+      if (trendDirection === "up") score += 10; else if (trendDirection === "down") score -= 10;
+      return Math.max(0, Math.min(100, Math.round(score)));
+    };
+    const calculateLeakCatalyst = (card) => {
+      const { leakMentions, metaRelevance, reprintRisk, upcomingSetSynergy } = card.leaks;
+      let score = 40;
+      score += leakMentions * 8; score += metaRelevance * 15; score -= reprintRisk * 20; score += upcomingSetSynergy * 12;
+      return Math.max(0, Math.min(100, Math.round(score)));
+    };
+    const calculateAlphaScore = (card) => {
+      const price = calculatePriceAlpha(card);
+      const sentiment = calculateSentimentScore(card);
+      const leak = calculateLeakCatalyst(card);
+      return { price, sentiment, leak, combined: Math.round(price * 0.40 + sentiment * 0.35 + leak * 0.25) };
+    };
+
+    // ============================================================
+    // DEMO DATA
+    // ============================================================
+    const generatePriceHistory = (current, volatility, days = 90) => {
+      const data = []; let price = current * (1 + (Math.random() - 0.3) * 0.4);
+      for (let i = days; i >= 0; i--) {
+        const date = new Date(); date.setDate(date.getDate() - i);
+        price = Math.max(price * 0.5, price + (Math.random() - 0.48) * volatility);
+        data.push({ date: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }), tcgplayer: +(price * (1 + (Math.random() - 0.5) * 0.06)).toFixed(2), ebaySold: +(price * (1 + (Math.random() - 0.5) * 0.1)).toFixed(2) });
+      }
+      return data;
+    };
+
+    const DEMO_CARDS = [
+      { id: "mev1-SAR1", name: "Mega Gengar ex SAR", set: "Ascended Heroes", number: "SAR/???", rarity: "Special Art Rare", type: "Psychic", image: "\u{1F47B}", pricing: { currentPrice: 462.00, avg30d: 395.00, avg90d: null, low52w: 340.00, high52w: 510.00, sources: { tcgplayer: 462.00, ebaySold: 478.00 }, graded: { psa10: 2200.00, bgs95: 1850.00, cgc10: 1600.00 } }, sentiment: { redditMentions: 95, redditSentiment: 0.92, youtubeMentions: 38, trendDirection: "up" }, leaks: { leakMentions: 5, metaRelevance: 3, reprintRisk: 0.05, upcomingSetSynergy: 4 }, priceHistory: null },
+      { id: "mev1-SAR2", name: "Mega Lucario ex SAR", set: "Ascended Heroes", number: "SAR/???", rarity: "Special Art Rare", type: "Fighting", image: "\u{1F4AA}", pricing: { currentPrice: 318.00, avg30d: 280.00, avg90d: null, low52w: 245.00, high52w: 350.00, sources: { tcgplayer: 318.00, ebaySold: 330.00 }, graded: { psa10: 1500.00, bgs95: 1250.00, cgc10: 1100.00 } }, sentiment: { redditMentions: 72, redditSentiment: 0.88, youtubeMentions: 30, trendDirection: "up" }, leaks: { leakMentions: 4, metaRelevance: 4, reprintRisk: 0.05, upcomingSetSynergy: 5 }, priceHistory: null },
+      { id: "mev1-SAR3", name: "Mega Dragonite ex SAR", set: "Ascended Heroes", number: "SAR/???", rarity: "Special Art Rare", type: "Dragon", image: "\u{1F409}", pricing: { currentPrice: 396.00, avg30d: 350.00, avg90d: null, low52w: 290.00, high52w: 425.00, sources: { tcgplayer: 396.00, ebaySold: 408.00 }, graded: { psa10: 1900.00, bgs95: 1600.00, cgc10: 1400.00 } }, sentiment: { redditMentions: 68, redditSentiment: 0.86, youtubeMentions: 28, trendDirection: "up" }, leaks: { leakMentions: 3, metaRelevance: 3, reprintRisk: 0.05, upcomingSetSynergy: 4 }, priceHistory: null },
+      { id: "swsh4-44", name: "Pikachu VMAX", set: "Vivid Voltage", number: "44/185", rarity: "Secret Rare", type: "Lightning", image: "\u26A1", pricing: { currentPrice: 345.00, avg30d: 320.00, avg90d: 310.00, low52w: 235.00, high52w: 410.00, sources: { tcgplayer: 345.00, ebaySold: 360.00 }, graded: { psa10: 1950.00, bgs95: 1700.00, cgc10: 1480.00 } }, sentiment: { redditMentions: 55, redditSentiment: 0.84, youtubeMentions: 22, trendDirection: "up" }, leaks: { leakMentions: 0, metaRelevance: 1, reprintRisk: 0.1, upcomingSetSynergy: 1 }, priceHistory: null },
+      { id: "swsh7-TG30", name: "Umbreon VMAX", set: "Evolving Skies", number: "TG30/TG30", rarity: "Trainer Gallery", type: "Dark", image: "\u{1F319}", pricing: { currentPrice: 205.00, avg30d: 225.00, avg90d: 240.00, low52w: 180.00, high52w: 330.00, sources: { tcgplayer: 205.00, ebaySold: 218.00 }, graded: { psa10: 1150.00, bgs95: 980.00, cgc10: 880.00 } }, sentiment: { redditMentions: 42, redditSentiment: 0.80, youtubeMentions: 18, trendDirection: "up" }, leaks: { leakMentions: 1, metaRelevance: 2, reprintRisk: 0.15, upcomingSetSynergy: 2 }, priceHistory: null },
+      { id: "sv3-125", name: "Charizard ex", set: "Obsidian Flames", number: "125/197", rarity: "Special Art Rare", type: "Fire", image: "\u{1F525}", pricing: { currentPrice: 72.00, avg30d: 95.00, avg90d: 110.00, low52w: 65.00, high52w: 185.00, sources: { tcgplayer: 72.00, ebaySold: 78.00 }, graded: { psa10: 420.00, bgs95: 360.00, cgc10: 320.00 } }, sentiment: { redditMentions: 48, redditSentiment: 0.68, youtubeMentions: 15, trendDirection: "down" }, leaks: { leakMentions: 2, metaRelevance: 4, reprintRisk: 0.2, upcomingSetSynergy: 2 }, priceHistory: null },
+      { id: "sv2-191", name: "Iono SAR", set: "Paldea Evolved", number: "191/193", rarity: "Special Art Rare", type: "Trainer", image: "\u{1F49C}", pricing: { currentPrice: 58.00, avg30d: 72.00, avg90d: 82.00, low52w: 50.00, high52w: 130.00, sources: { tcgplayer: 58.00, ebaySold: 62.00 }, graded: { psa10: 290.00, bgs95: 250.00, cgc10: 215.00 } }, sentiment: { redditMentions: 52, redditSentiment: 0.78, youtubeMentions: 20, trendDirection: "down" }, leaks: { leakMentions: 2, metaRelevance: 5, reprintRisk: 0.55, upcomingSetSynergy: 2 }, priceHistory: null },
+      { id: "sv3pt5-207", name: "Mew ex SAR", set: "Scarlet & Violet 151", number: "207/165", rarity: "Special Art Rare", type: "Psychic", image: "\u{1F9EC}", pricing: { currentPrice: 82.00, avg30d: 88.00, avg90d: 96.00, low52w: 62.00, high52w: 145.00, sources: { tcgplayer: 82.00, ebaySold: 86.00 }, graded: { psa10: 410.00, bgs95: 350.00, cgc10: 305.00 } }, sentiment: { redditMentions: 48, redditSentiment: 0.80, youtubeMentions: 18, trendDirection: "up" }, leaks: { leakMentions: 2, metaRelevance: 3, reprintRisk: 0.2, upcomingSetSynergy: 3 }, priceHistory: null },
+      { id: "sv4-228", name: "Charizard ex SAR", set: "Paradox Rift", number: "228/182", rarity: "Special Art Rare", type: "Fire", image: "\u{1F525}", pricing: { currentPrice: 88.00, avg30d: 105.00, avg90d: 122.00, low52w: 78.00, high52w: 175.00, sources: { tcgplayer: 88.00, ebaySold: 94.00 }, graded: { psa10: 520.00, bgs95: 440.00, cgc10: 385.00 } }, sentiment: { redditMentions: 55, redditSentiment: 0.72, youtubeMentions: 18, trendDirection: "down" }, leaks: { leakMentions: 2, metaRelevance: 3, reprintRisk: 0.15, upcomingSetSynergy: 2 }, priceHistory: null },
+      { id: "sv8a-IR1", name: "Umbreon ex SAR", set: "Prismatic Evolutions", number: "IR/???", rarity: "Special Art Rare", type: "Dark", image: "\u{1F311}", pricing: { currentPrice: 155.00, avg30d: 185.00, avg90d: 210.00, low52w: 140.00, high52w: 280.00, sources: { tcgplayer: 155.00, ebaySold: 162.00 }, graded: { psa10: 850.00, bgs95: 720.00, cgc10: 630.00 } }, sentiment: { redditMentions: 65, redditSentiment: 0.75, youtubeMentions: 24, trendDirection: "down" }, leaks: { leakMentions: 3, metaRelevance: 2, reprintRisk: 0.65, upcomingSetSynergy: 1 }, priceHistory: null },
+      { id: "sv4pt5-162", name: "Arceus VSTAR Gold", set: "Paldean Fates", number: "162/091", rarity: "Gold Rare", type: "Colorless", image: "\u2728", pricing: { currentPrice: 32.00, avg30d: 36.00, avg90d: 42.00, low52w: 22.00, high52w: 65.00, sources: { tcgplayer: 32.00, ebaySold: 35.00 }, graded: { psa10: 140.00, bgs95: 115.00, cgc10: 98.00 } }, sentiment: { redditMentions: 18, redditSentiment: 0.62, youtubeMentions: 6, trendDirection: "up" }, leaks: { leakMentions: 0, metaRelevance: 2, reprintRisk: 0.3, upcomingSetSynergy: 1 }, priceHistory: null },
+      { id: "mev1-RMT", name: "Rocket's Mewtwo ex SAR", set: "Ascended Heroes", number: "SAR/???", rarity: "Special Art Rare", type: "Psychic", image: "\u{1F7E3}", pricing: { currentPrice: 285.00, avg30d: 260.00, avg90d: null, low52w: 220.00, high52w: 320.00, sources: { tcgplayer: 285.00, ebaySold: 298.00 }, graded: { psa10: 1350.00, bgs95: 1150.00, cgc10: 1000.00 } }, sentiment: { redditMentions: 82, redditSentiment: 0.90, youtubeMentions: 32, trendDirection: "up" }, leaks: { leakMentions: 4, metaRelevance: 3, reprintRisk: 0.05, upcomingSetSynergy: 4 }, priceHistory: null },
+    ].map(card => ({ ...card, priceHistory: generatePriceHistory(card.pricing.currentPrice, card.pricing.currentPrice * 0.03), alpha: null })).map(card => ({ ...card, alpha: calculateAlphaScore(card) }));
+
+    const DEMO_LEAKS = [
+      { id: 1, source: "PokeBeach", title: "Mega Zygarde ex & Mega Starmie ex Revealed for 'Perfect Order'", date: "3h ago", impact: "high", pokemon: ["Zygarde", "Starmie"], url: "#", summary: "Japanese leaks reveal Mega Zygarde ex and Mega Starmie ex as chase cards in Perfect Order, dropping March 27." },
+      { id: 2, source: "Pokemon.com", title: "April 10 Standard Rotation: G-Regulation Cards Leaving Format", date: "6h ago", impact: "high", pokemon: ["Multiple"], url: "#", summary: "Official rotation confirmed: all G-regulation mark cards become illegal April 10. Only H, I, J marks remain legal." },
+      { id: 3, source: "PokemonBlog", title: "Toronto Regional: Gardevoir ex/Jellicent ex Takes the Crown", date: "10h ago", impact: "medium", pokemon: ["Gardevoir"], url: "#", summary: "Giovanny Sasso piloted Gardevoir ex/Jellicent ex to a 15-2-1 record at Toronto Regionals (2,270 Masters)." },
+      { id: 4, source: "PokeBeach", title: "First Partner Illustration Collections \u2014 Full Promo List Leaked", date: "14h ago", impact: "high", pokemon: ["Bulbasaur", "Charmander", "Squirtle"], url: "#", summary: "All 9 Illustration Rare starter promos for the 30th Anniversary collection revealed. Series 1 releasing March 30." },
+      { id: 5, source: "PokeBeach", title: "Mega Gengar ex SAR Confirmed as Ultra Premium Pull", date: "1d ago", impact: "high", pokemon: ["Gengar"], url: "#", summary: "Mega Gengar ex SAR from Ascended Heroes already hitting $460+ in early sales." },
+      { id: 6, source: "PokemonBlog", title: "Prismatic Evolutions Reprint Wave Hitting Shelves Now", date: "1d ago", impact: "medium", pokemon: ["Eevee", "Umbreon"], url: "#", summary: "New Prismatic Evolutions reprint stock appearing at retailers. Expect short-term dip on singles." },
+      { id: 7, source: "Pokemon.com", title: "Europe International Championships This Weekend in London", date: "2d ago", impact: "medium", pokemon: ["Multiple"], url: "#", summary: "$240K prize pool at 2026 EUIC. Note: Ascended Heroes NOT legal for this event." },
+      { id: 8, source: "PokeBeach", title: "Pok\u00E9mon Day 2026 Exclusive Bulbasaur Promo \u2014 Single Print Run", date: "3d ago", impact: "low", pokemon: ["Bulbasaur"], url: "#", summary: "Reverse holo Bulbasaur promo stamped 'Pok\u00E9mon Day 2026' will be League-exclusive. Feb 27 distribution." },
+    ];
+
+    const DEMO_SENTIMENT = [
+      { id: 1, platform: "reddit", author: "u/TCGInvestor99", title: "Mega Gengar ex SAR already at $460 \u2014 is Ascended Heroes the next Evolving Skies?", score: 412, comments: 103, sentiment: 0.88, time: "1h ago", url: "#" },
+      { id: 2, platform: "reddit", author: "u/PokemonCollector", title: "April rotation is going to CRUSH G-regulation singles \u2014 sell now or hold?", score: 287, comments: 94, sentiment: 0.45, time: "3h ago", url: "#" },
+      { id: 3, platform: "youtube", author: "Pokemon TCG Radio", title: "Perfect Order Full Set Breakdown \u2014 4 NEW Mega Evolutions!", views: "89K", sentiment: 0.82, time: "5h ago", url: "#" },
+      { id: 4, platform: "reddit", author: "u/CardFlipKing", title: "Prismatic Evolutions reprint hitting stores \u2014 buy the dip on Umbreon ex SAR?", score: 198, comments: 67, sentiment: 0.72, time: "7h ago", url: "#" },
+      { id: 5, platform: "youtube", author: "TCA Gaming", title: "Top 10 Cards to Buy BEFORE April Rotation Hits", views: "152K", sentiment: 0.74, time: "9h ago", url: "#" },
+      { id: 6, platform: "reddit", author: "u/VintagePokeCollector", title: "Paldean Fates sealed is the play \u2014 post-rotation packs could hit $20+", score: 234, comments: 71, sentiment: 0.83, time: "11h ago", url: "#" },
+      { id: 7, platform: "youtube", author: "Pok\u00E9Rev", title: "Pok\u00E9mon 30th Anniversary: Which Cards Will MOON?", views: "73K", sentiment: 0.78, time: "1d ago", url: "#" },
+      { id: 8, platform: "reddit", author: "u/MetaAnalyst", title: "Post-Toronto meta: Gardevoir ex/Jellicent is Tier 0 \u2014 what does this mean for EUIC?", score: 321, comments: 88, sentiment: 0.71, time: "1d ago", url: "#" },
+    ];
+
+    // Utility components
+    const ScoreBadge = ({ score, size = "md" }) => {
+      const bg = score >= 75 ? "bg-green-900 text-green-400 border border-green-800" : score >= 55 ? "bg-yellow-900 text-yellow-400 border border-yellow-800" : "bg-red-900 text-red-400 border border-red-800";
+      const sz = size === "lg" ? "text-2xl px-4 py-2 font-bold" : size === "sm" ? "text-xs px-2 py-1" : "text-sm px-3 py-1 font-semibold";
+      return <span className={`${bg} ${sz} rounded-lg inline-flex items-center gap-1`}>{score}</span>;
+    };
+
+    const PriceChange = ({ current, previous }) => {
+      if (!previous) return null;
+      const pct = ((current - previous) / previous * 100).toFixed(1);
+      const isUp = current >= previous;
+      return (
+        <span className={`inline-flex items-center gap-1 text-sm ${isUp ? "text-green-400" : "text-red-400"}`}>
+          <Icon name={isUp ? "arrow-up-right" : "arrow-down-right"} className="w-3 h-3" />
+          {isUp ? "+" : ""}{pct}%
+        </span>
+      );
+    };
+
+    const SourceBadge = ({ source }) => {
+      const colors = { PokeBeach: "bg-blue-900 text-blue-400", PokemonBlog: "bg-purple-900 text-purple-400", "Pokemon.com": "bg-yellow-900 text-yellow-400" };
+      return <span className={`text-xs px-2 py-1 rounded-full ${colors[source] || "bg-gray-800 text-gray-400"}`}>{source}</span>;
+    };
+    const ImpactBadge = ({ impact }) => {
+      const c = impact === "high" ? "bg-red-900 text-red-400" : impact === "medium" ? "bg-yellow-900 text-yellow-400" : "bg-gray-800 text-gray-400";
+      return <span className={`text-xs px-2 py-1 rounded-full uppercase tracking-wider font-medium ${c}`}>{impact}</span>;
+    };
+    const TypeBadge = ({ type }) => {
+      const colors = { Fire: "bg-red-900 text-orange-400", Lightning: "bg-yellow-900 text-yellow-300", Dark: "bg-purple-900 text-purple-400", Colorless: "bg-gray-800 text-gray-300", Psychic: "bg-pink-900 text-pink-400", Dragon: "bg-indigo-900 text-indigo-400", Trainer: "bg-green-900 text-green-400", Water: "bg-blue-900 text-blue-400", Fighting: "bg-red-900 text-red-300" };
+      return <span className={`text-xs px-2 py-1 rounded-full ${colors[type] || "bg-gray-800 text-gray-400"}`}>{type}</span>;
+    };
+
+    // ============================================================
+    // MAIN APP
+    // ============================================================
+    function PokemonTCGAlpha() {
+      const [activeTab, setActiveTab] = useState("dashboard");
+      const [selectedCard, setSelectedCard] = useState(null);
+      const [searchQuery, setSearchQuery] = useState("");
+      const [watchlist, setWatchlist] = useState(new Set(["sv3-125", "swsh7-TG30", "sv2-191"]));
+      const [sortBy, setSortBy] = useState("alpha");
+      const [filterType, setFilterType] = useState("all");
+
+      const cards = useMemo(() => {
+        let filtered = DEMO_CARDS.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.set.toLowerCase().includes(searchQuery.toLowerCase()));
+        if (filterType !== "all") filtered = filtered.filter(c => c.type === filterType);
+        const sorted = [...filtered];
+        if (sortBy === "alpha") sorted.sort((a, b) => b.alpha.combined - a.alpha.combined);
+        else if (sortBy === "price") sorted.sort((a, b) => b.pricing.currentPrice - a.pricing.currentPrice);
+        else if (sortBy === "sentiment") sorted.sort((a, b) => b.alpha.sentiment - a.alpha.sentiment);
+        else if (sortBy === "change") sorted.sort((a, b) => ((a.pricing.currentPrice - a.pricing.avg30d) / a.pricing.avg30d) - ((b.pricing.currentPrice - b.pricing.avg30d) / b.pricing.avg30d));
+        return sorted;
+      }, [searchQuery, sortBy, filterType]);
+
+      const toggleWatchlist = useCallback((id) => {
+        setWatchlist(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+      }, []);
+
+      const topAlpha = useMemo(() => [...DEMO_CARDS].sort((a, b) => b.alpha.combined - a.alpha.combined).slice(0, 5), []);
+      const biggestDips = useMemo(() => [...DEMO_CARDS].sort((a, b) => ((a.pricing.currentPrice - (a.pricing.avg30d||a.pricing.currentPrice)) / (a.pricing.avg30d||a.pricing.currentPrice)) - ((b.pricing.currentPrice - (b.pricing.avg30d||b.pricing.currentPrice)) / (b.pricing.avg30d||b.pricing.currentPrice))).slice(0, 5), []);
+      const watchlistCards = useMemo(() => DEMO_CARDS.filter(c => watchlist.has(c.id)), [watchlist]);
+
+      // Card detail view
+      if (selectedCard) {
+        const card = DEMO_CARDS.find(c => c.id === selectedCard);
+        if (!card) return null;
+        const radarData = [
+          { metric: "Price Alpha", value: card.alpha.price },
+          { metric: "Sentiment", value: card.alpha.sentiment },
+          { metric: "Leak Catalyst", value: card.alpha.leak },
+          { metric: "Volume", value: Math.min(100, card.sentiment.redditMentions + card.sentiment.youtubeMentions) },
+          { metric: "Liquidity", value: 65 + Math.random() * 20 },
+        ];
+        return (
+          <div className="min-h-screen bg-gray-950 text-gray-100">
+            <div style={{maxWidth:"80rem",margin:"0 auto",padding:"1.5rem"}}>
+              <button onClick={() => setSelectedCard(null)} className="flex items-center gap-2 text-gray-400 hover:text-white mb-6" style={{background:"none",border:"none",cursor:"pointer",color:"#9ca3af",fontSize:"0.875rem"}}>
+                <span style={{transform:"rotate(180deg)",display:"inline-block"}}><Icon name="chevron-right" className="w-4 h-4" /></span> Back
+              </button>
+
+              <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:"1.5rem"}}>
+                {/* Card Info */}
+                <div style={{display:"flex",flexDirection:"column",gap:"1rem"}}>
+                  <div className="bg-gray-900 border-gray-800" style={{borderRadius:"1rem",padding:"1.5rem",border:"1px solid #1f2937"}}>
+                    <div style={{fontSize:"3.5rem",textAlign:"center",marginBottom:"1rem"}}>{card.image}</div>
+                    <h1 style={{fontSize:"1.5rem",fontWeight:"bold",textAlign:"center"}}>{card.name}</h1>
+                    <p style={{color:"#9ca3af",textAlign:"center",marginTop:"0.25rem"}}>{card.set} · {card.number}</p>
+                    <div style={{display:"flex",justifyContent:"center",gap:"0.5rem",marginTop:"0.75rem"}}>
+                      <TypeBadge type={card.type} />
+                      <span className="text-xs" style={{padding:"0.125rem 0.5rem",borderRadius:"9999px",background:"#1f2937",color:"#d1d5db",fontSize:"0.75rem"}}>{card.rarity}</span>
+                    </div>
+                    <div style={{marginTop:"1.5rem",textAlign:"center"}}>
+                      <p style={{fontSize:"0.875rem",color:"#9ca3af"}}>Alpha Score</p>
+                      <div style={{marginTop:"0.25rem"}}><ScoreBadge score={card.alpha.combined} size="lg" /></div>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"0.75rem",marginTop:"1.5rem",textAlign:"center"}}>
+                      <div><p style={{fontSize:"0.75rem",color:"#6b7280"}}>Price</p><ScoreBadge score={card.alpha.price} size="sm" /></div>
+                      <div><p style={{fontSize:"0.75rem",color:"#6b7280"}}>Sentiment</p><ScoreBadge score={card.alpha.sentiment} size="sm" /></div>
+                      <div><p style={{fontSize:"0.75rem",color:"#6b7280"}}>Catalyst</p><ScoreBadge score={card.alpha.leak} size="sm" /></div>
+                    </div>
+                  </div>
+                  <div className="bg-gray-900" style={{borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                    <h3 style={{fontWeight:"600",marginBottom:"1rem",display:"flex",alignItems:"center",gap:"0.5rem"}}><Icon name="target" className="w-4 h-4" style={{color:"#818CF8"}} /> Score Breakdown</h3>
+                    <RadarScoreChart data={radarData} />
+                  </div>
+                </div>
+
+                {/* Price & Analysis */}
+                <div style={{display:"flex",flexDirection:"column",gap:"1rem"}}>
+                  <div className="bg-gray-900" style={{borderRadius:"1rem",padding:"1.5rem",border:"1px solid #1f2937"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"0.5rem"}}>
+                      <h2 style={{fontWeight:"600",display:"flex",alignItems:"center",gap:"0.5rem"}}><Icon name="dollar-sign" className="w-4 h-4" style={{color:"#34D399"}} /> Price History (90 Days)</h2>
+                      <div style={{display:"flex",alignItems:"center",gap:"1rem",fontSize:"0.875rem"}}>
+                        <span style={{display:"flex",alignItems:"center",gap:"0.375rem"}}><span style={{width:"0.625rem",height:"0.625rem",borderRadius:"50%",background:"#34D399",display:"inline-block"}}></span>TCGPlayer</span>
+                        <span style={{display:"flex",alignItems:"center",gap:"0.375rem"}}><span style={{width:"0.625rem",height:"0.625rem",borderRadius:"50%",background:"#60A5FA",display:"inline-block"}}></span>eBay Sold</span>
+                      </div>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:"1rem",margin:"1rem 0"}}>
+                      <div style={{background:"rgba(31,41,55,0.5)",borderRadius:"0.75rem",padding:"0.75rem"}}>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>Current</p>
+                        <p style={{fontSize:"1.125rem",fontWeight:"bold"}}>${card.pricing.currentPrice.toFixed(2)}</p>
+                        {card.pricing.avg30d && <PriceChange current={card.pricing.currentPrice} previous={card.pricing.avg30d} />}
+                      </div>
+                      <div style={{background:"rgba(31,41,55,0.5)",borderRadius:"0.75rem",padding:"0.75rem"}}>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>30d Avg</p>
+                        <p style={{fontSize:"1.125rem",fontWeight:"bold",color:"#d1d5db"}}>{card.pricing.avg30d ? `$${card.pricing.avg30d.toFixed(2)}` : "N/A"}</p>
+                      </div>
+                      <div style={{background:"rgba(31,41,55,0.5)",borderRadius:"0.75rem",padding:"0.75rem"}}>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>52w Low</p>
+                        <p style={{fontSize:"1.125rem",fontWeight:"bold",color:"#EF4444"}}>${card.pricing.low52w.toFixed(2)}</p>
+                      </div>
+                      <div style={{background:"rgba(31,41,55,0.5)",borderRadius:"0.75rem",padding:"0.75rem"}}>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>52w High</p>
+                        <p style={{fontSize:"1.125rem",fontWeight:"bold",color:"#34D399"}}>${card.pricing.high52w.toFixed(2)}</p>
+                      </div>
+                    </div>
+                    <div style={{height:"280px"}}>
+                      <DualAreaChart data={card.priceHistory} />
+                    </div>
+                  </div>
+
+                  {/* Graded Card Pricing */}
+                  <div className="bg-gray-900" style={{borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                    <h3 style={{fontWeight:"600",marginBottom:"1rem",display:"flex",alignItems:"center",gap:"0.5rem"}}><Icon name="award" className="w-4 h-4" style={{color:"#F59E0B"}} /> Graded Card Values</h3>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"1rem"}}>
+                      {[{label:"PSA 10",price:card.pricing.graded.psa10,color:"#EF4444"},{label:"BGS 9.5",price:card.pricing.graded.bgs95,color:"#3B82F6"},{label:"CGC 10",price:card.pricing.graded.cgc10,color:"#F59E0B"}].map(g => (
+                        <div key={g.label} style={{background:`linear-gradient(135deg, ${g.color}15, transparent)`,borderRadius:"0.75rem",padding:"1rem",border:"1px solid #1f2937"}}>
+                          <span style={{fontSize:"0.75rem",fontWeight:"bold",padding:"0.125rem 0.5rem",borderRadius:"0.25rem",background:`${g.color}30`,color:g.color}}>{g.label}</span>
+                          <p style={{fontSize:"1.25rem",fontWeight:"bold",marginTop:"0.5rem"}}>${g.price.toFixed(2)}</p>
+                          <p style={{fontSize:"0.75rem",color:"#6b7280",marginTop:"0.25rem"}}>{(g.price / card.pricing.currentPrice).toFixed(1)}x raw</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // ============================================================
+      // NAVIGATION TABS
+      // ============================================================
+      const tabs = [
+        { id: "dashboard", label: "Dashboard", icon: "activity" },
+        { id: "scanner", label: "Alpha Scanner", icon: "zap" },
+        { id: "sentiment", label: "Sentiment", icon: "message-circle" },
+        { id: "leaks", label: "Leak Tracker", icon: "newspaper" },
+        { id: "watchlist", label: "Watchlist", icon: "star-off" },
+      ];
+
+      return (
+        <div className="min-h-screen bg-gray-950 text-gray-100">
+          {/* Header */}
+          <header style={{position:"sticky",top:0,zIndex:50,background:"rgba(3,7,18,0.8)",backdropFilter:"blur(24px)",borderBottom:"1px solid rgba(31,41,55,0.5)"}}>
+            <div style={{maxWidth:"80rem",margin:"0 auto",padding:"0 1.5rem"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",height:"4rem"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"0.75rem"}}>
+                  <div style={{width:"2.25rem",height:"2.25rem",background:"linear-gradient(135deg,#F59E0B,#EA580C)",borderRadius:"0.75rem",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.125rem",fontWeight:"bold",color:"white",boxShadow:"0 4px 6px -1px rgba(234,88,12,0.2)"}}>α</div>
+                  <div>
+                    <h1 style={{fontSize:"1.125rem",fontWeight:"bold",letterSpacing:"-0.025em"}}>PokéAlpha</h1>
+                    <p style={{fontSize:"0.625rem",color:"#6b7280",marginTop:"-2px",letterSpacing:"0.1em",textTransform:"uppercase"}}>TCG Market Intelligence</p>
+                  </div>
+                </div>
+                <nav style={{display:"flex",alignItems:"center",gap:"0.25rem"}}>
+                  {tabs.map(tab => (
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                      style={{display:"flex",alignItems:"center",gap:"0.5rem",padding:"0.5rem 1rem",borderRadius:"0.75rem",fontSize:"0.875rem",fontWeight:"500",border:"none",cursor:"pointer",transition:"all 0.2s",background:activeTab === tab.id ? "#1f2937" : "transparent",color:activeTab === tab.id ? "white" : "#9ca3af"}}>
+                      <Icon name={tab.icon} className="w-4 h-4" />{tab.label}
+                      {tab.id === "watchlist" && watchlist.size > 0 && <span style={{background:"rgba(245,158,11,0.2)",color:"#F59E0B",fontSize:"0.75rem",padding:"0.125rem 0.375rem",borderRadius:"9999px"}}>{watchlist.size}</span>}
+                    </button>
+                  ))}
+                </nav>
+                <div style={{display:"flex",alignItems:"center",gap:"0.375rem",fontSize:"0.75rem",padding:"0.375rem 0.75rem",borderRadius:"9999px",background:"rgba(245,158,11,0.2)",color:"#F59E0B"}}>
+                  <div style={{width:"0.375rem",height:"0.375rem",borderRadius:"50%",background:"#F59E0B"}}></div>
+                  Demo Data
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <main style={{maxWidth:"80rem",margin:"0 auto",padding:"1.5rem"}}>
+
+            {/* ==================== DASHBOARD ==================== */}
+            {activeTab === "dashboard" && (
+              <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:"1rem"}}>
+                  {[
+                    { label: "Cards Tracked", value: DEMO_CARDS.length, icon: "layers", color: "#818CF8" },
+                    { label: "Top Alpha Score", value: topAlpha[0]?.alpha.combined, icon: "zap", color: "#F59E0B" },
+                    { label: "Watchlist Value", value: `$${watchlistCards.reduce((s, c) => s + c.pricing.currentPrice, 0).toFixed(0)}`, icon: "star", color: "#EAB308" },
+                    { label: "Active Leaks", value: DEMO_LEAKS.filter(l => l.impact === "high").length, icon: "alert-triangle", color: "#EF4444" },
+                  ].map((m, i) => (
+                    <div key={i} style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                      <Icon name={m.icon} className="w-5 h-5" style={{color:m.color}} />
+                      <p style={{fontSize:"1.5rem",fontWeight:"bold",marginTop:"0.5rem"}}>{m.value}</p>
+                      <p style={{fontSize:"0.75rem",color:"#6b7280",marginTop:"0.25rem"}}>{m.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"1.5rem"}}>
+                  {/* Top Alpha */}
+                  <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                    <h2 style={{fontWeight:"600",display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"1rem"}}><Icon name="zap" className="w-4 h-4" style={{color:"#F59E0B"}} /> Top Alpha Opportunities</h2>
+                    <div style={{display:"flex",flexDirection:"column",gap:"0.5rem"}}>
+                      {topAlpha.map((card, i) => (
+                        <button key={card.id} onClick={() => setSelectedCard(card.id)}
+                          style={{width:"100%",display:"flex",alignItems:"center",gap:"0.75rem",padding:"0.75rem",borderRadius:"0.75rem",background:"rgba(31,41,55,0.3)",border:"none",cursor:"pointer",textAlign:"left",color:"inherit"}}>
+                          <span style={{fontSize:"1rem",width:"2rem",textAlign:"center",fontWeight:"bold",color:"#4b5563"}}>#{i + 1}</span>
+                          <span style={{fontSize:"1.5rem"}}>{card.image}</span>
+                          <div style={{flex:1,minWidth:0}}>
+                            <p style={{fontWeight:"500",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.name}</p>
+                            <p style={{fontSize:"0.75rem",color:"#6b7280"}}>{card.set}</p>
+                          </div>
+                          <div style={{textAlign:"right"}}>
+                            <p style={{fontWeight:"500"}}>${card.pricing.currentPrice.toFixed(2)}</p>
+                            <PriceChange current={card.pricing.currentPrice} previous={card.pricing.avg30d} />
+                          </div>
+                          <ScoreBadge score={card.alpha.combined} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Biggest Dips */}
+                  <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                    <h2 style={{fontWeight:"600",display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"1rem"}}><Icon name="trending-down" className="w-4 h-4" style={{color:"#EF4444"}} /> Biggest Dips (vs 30d Avg)</h2>
+                    <div style={{display:"flex",flexDirection:"column",gap:"0.5rem"}}>
+                      {biggestDips.map((card) => (
+                        <button key={card.id} onClick={() => setSelectedCard(card.id)}
+                          style={{width:"100%",display:"flex",alignItems:"center",gap:"0.75rem",padding:"0.75rem",borderRadius:"0.75rem",background:"rgba(31,41,55,0.3)",border:"none",cursor:"pointer",textAlign:"left",color:"inherit"}}>
+                          <span style={{fontSize:"1.5rem"}}>{card.image}</span>
+                          <div style={{flex:1,minWidth:0}}>
+                            <p style={{fontWeight:"500",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.name}</p>
+                            <p style={{fontSize:"0.75rem",color:"#6b7280"}}>{card.set}</p>
+                          </div>
+                          <div style={{textAlign:"right"}}>
+                            <p style={{fontWeight:"500"}}>${card.pricing.currentPrice.toFixed(2)}</p>
+                            <PriceChange current={card.pricing.currentPrice} previous={card.pricing.avg30d} />
+                          </div>
+                          <ScoreBadge score={card.alpha.combined} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Latest Leaks */}
+                <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem"}}>
+                    <h2 style={{fontWeight:"600",display:"flex",alignItems:"center",gap:"0.5rem"}}><Icon name="flame" className="w-4 h-4" style={{color:"#F97316"}} /> Latest Leak Intelligence</h2>
+                    <button onClick={() => setActiveTab("leaks")} style={{fontSize:"0.875rem",color:"#818CF8",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:"0.25rem"}}>View all <Icon name="chevron-right" className="w-4 h-4" /></button>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:"0.75rem"}}>
+                    {DEMO_LEAKS.slice(0, 3).map(leak => (
+                      <div key={leak.id} style={{background:"rgba(31,41,55,0.4)",borderRadius:"0.75rem",padding:"1rem"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"0.5rem"}}><SourceBadge source={leak.source} /><ImpactBadge impact={leak.impact} /><span style={{fontSize:"0.75rem",color:"#6b7280",marginLeft:"auto"}}>{leak.date}</span></div>
+                        <p style={{fontSize:"0.875rem",fontWeight:"500"}}>{leak.title}</p>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280",marginTop:"0.5rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{leak.summary}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ==================== ALPHA SCANNER ==================== */}
+            {activeTab === "scanner" && (
+              <div style={{display:"flex",flexDirection:"column",gap:"1rem"}}>
+                <div style={{display:"flex",gap:"0.75rem"}}>
+                  <div style={{position:"relative",flex:1}}>
+                    <div style={{position:"absolute",left:"0.75rem",top:"50%",transform:"translateY(-50%)"}}><Icon name="search" className="w-4 h-4" style={{color:"#6b7280"}} /></div>
+                    <input type="text" placeholder="Search cards by name or set..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                      style={{width:"100%",paddingLeft:"2.5rem",paddingRight:"1rem",padding:"0.625rem 1rem 0.625rem 2.5rem",background:"#111827",border:"1px solid #1f2937",borderRadius:"0.75rem",fontSize:"0.875rem",color:"white"}} />
+                  </div>
+                  <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{background:"#111827",border:"1px solid #1f2937",borderRadius:"0.75rem",padding:"0.625rem 2rem 0.625rem 0.75rem",fontSize:"0.875rem",color:"white"}}>
+                    <option value="alpha">Sort: Alpha Score</option>
+                    <option value="price">Sort: Price</option>
+                    <option value="sentiment">Sort: Sentiment</option>
+                    <option value="change">Sort: Biggest Dip</option>
+                  </select>
+                  <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{background:"#111827",border:"1px solid #1f2937",borderRadius:"0.75rem",padding:"0.625rem 2rem 0.625rem 0.75rem",fontSize:"0.875rem",color:"white"}}>
+                    <option value="all">All Types</option>
+                    {["Fire","Lightning","Dark","Colorless","Psychic","Dragon","Trainer","Water","Fighting"].map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+
+                <div style={{background:"#111827",borderRadius:"1rem",border:"1px solid #1f2937",overflow:"hidden"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"4fr 2fr 1fr 1fr 1fr 1fr 1fr 1fr",gap:"1rem",padding:"0.75rem 1.25rem",fontSize:"0.75rem",fontWeight:"500",color:"#6b7280",textTransform:"uppercase",letterSpacing:"0.05em",borderBottom:"1px solid #1f2937"}}>
+                    <div>Card</div><div style={{textAlign:"right"}}>Price</div><div style={{textAlign:"center"}}>30d</div><div style={{textAlign:"center"}}>Price α</div><div style={{textAlign:"center"}}>Sent.</div><div style={{textAlign:"center"}}>Catal.</div><div style={{textAlign:"center"}}>Alpha</div><div style={{textAlign:"center"}}>Watch</div>
+                  </div>
+                  {cards.map(card => (
+                    <div key={card.id} onClick={() => setSelectedCard(card.id)}
+                      style={{display:"grid",gridTemplateColumns:"4fr 2fr 1fr 1fr 1fr 1fr 1fr 1fr",gap:"1rem",alignItems:"center",padding:"0.875rem 1.25rem",borderBottom:"1px solid rgba(31,41,55,0.5)",cursor:"pointer",transition:"background 0.2s"}}
+                      onMouseOver={e => e.currentTarget.style.background = "rgba(31,41,55,0.3)"} onMouseOut={e => e.currentTarget.style.background = "transparent"}>
+                      <div style={{display:"flex",alignItems:"center",gap:"0.75rem"}}>
+                        <span style={{fontSize:"1.5rem"}}>{card.image}</span>
+                        <div>
+                          <p style={{fontWeight:"500"}}>{card.name}</p>
+                          <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginTop:"0.125rem"}}><TypeBadge type={card.type} /><span style={{fontSize:"0.75rem",color:"#6b7280"}}>{card.set}</span></div>
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <p style={{fontWeight:"500"}}>${card.pricing.currentPrice.toFixed(2)}</p>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>eBay: ${card.pricing.sources.ebaySold.toFixed(2)}</p>
+                      </div>
+                      <div style={{textAlign:"center"}}><PriceChange current={card.pricing.currentPrice} previous={card.pricing.avg30d} /></div>
+                      <div style={{textAlign:"center"}}><ScoreBadge score={card.alpha.price} size="sm" /></div>
+                      <div style={{textAlign:"center"}}><ScoreBadge score={card.alpha.sentiment} size="sm" /></div>
+                      <div style={{textAlign:"center"}}><ScoreBadge score={card.alpha.leak} size="sm" /></div>
+                      <div style={{textAlign:"center"}}><ScoreBadge score={card.alpha.combined} /></div>
+                      <div style={{textAlign:"center"}}>
+                        <button onClick={e => { e.stopPropagation(); toggleWatchlist(card.id); }}
+                          style={{padding:"0.375rem",borderRadius:"0.5rem",background:"none",border:"none",cursor:"pointer",color:watchlist.has(card.id) ? "#F59E0B" : "#4b5563"}}>
+                          <Icon name={watchlist.has(card.id) ? "star" : "star-off"} className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ==================== SENTIMENT ==================== */}
+            {activeTab === "sentiment" && (
+              <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:"1rem"}}>
+                  <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"0.5rem",color:"#F97316"}}><Icon name="message-circle" className="w-5 h-5" /><span style={{fontWeight:"600"}}>Reddit</span></div>
+                    <p style={{fontSize:"1.875rem",fontWeight:"bold"}}>{DEMO_SENTIMENT.filter(s => s.platform === "reddit").length}</p>
+                    <p style={{fontSize:"0.75rem",color:"#6b7280",marginTop:"0.25rem"}}>Trending posts (24h)</p>
+                  </div>
+                  <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"0.5rem",color:"#EF4444"}}><Icon name="youtube" className="w-5 h-5" /><span style={{fontWeight:"600"}}>YouTube</span></div>
+                    <p style={{fontSize:"1.875rem",fontWeight:"bold"}}>{DEMO_SENTIMENT.filter(s => s.platform === "youtube").length}</p>
+                    <p style={{fontSize:"0.75rem",color:"#6b7280",marginTop:"0.25rem"}}>Relevant videos (24h)</p>
+                  </div>
+                  <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"0.5rem",color:"#3B82F6"}}><Icon name="activity" className="w-5 h-5" /><span style={{fontWeight:"600"}}>Overall Sentiment</span></div>
+                    <p style={{fontSize:"1.875rem",fontWeight:"bold",color:"#34D399"}}>73%</p>
+                    <p style={{fontSize:"0.75rem",color:"#6b7280",marginTop:"0.25rem"}}>Community is Bullish</p>
+                  </div>
+                </div>
+
+                <div style={{background:"#111827",borderRadius:"1rem",border:"1px solid #1f2937",overflow:"hidden"}}>
+                  <div style={{padding:"1rem 1.25rem",borderBottom:"1px solid #1f2937"}}>
+                    <h2 style={{fontWeight:"600",display:"flex",alignItems:"center",gap:"0.5rem"}}><Icon name="zap" className="w-4 h-4" style={{color:"#F59E0B"}} /> Live Sentiment Feed</h2>
+                  </div>
+                  {DEMO_SENTIMENT.map(post => (
+                    <div key={post.id} style={{padding:"1rem 1.25rem",borderBottom:"1px solid rgba(31,41,55,0.5)"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:"1rem"}}>
+                        <div style={{marginTop:"0.25rem",padding:"0.5rem",borderRadius:"0.75rem",background:post.platform === "reddit" ? "rgba(249,115,22,0.1)" : "rgba(239,68,68,0.1)",color:post.platform === "reddit" ? "#F97316" : "#EF4444"}}>
+                          <Icon name={post.platform === "reddit" ? "message-circle" : "youtube"} className="w-5 h-5" />
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <p style={{fontWeight:"500"}}>{post.title}</p>
+                          <div style={{display:"flex",alignItems:"center",gap:"0.75rem",marginTop:"0.5rem",fontSize:"0.75rem",color:"#6b7280"}}>
+                            <span>{post.author}</span>
+                            <span style={{display:"flex",alignItems:"center",gap:"0.25rem"}}><Icon name="clock" className="w-3 h-3" />{post.time}</span>
+                            {post.score && <span>↑ {post.score}</span>}
+                            {post.comments && <span>💬 {post.comments}</span>}
+                            {post.views && <span>👁 {post.views} views</span>}
+                          </div>
+                        </div>
+                        <div style={{textAlign:"right",flexShrink:0}}>
+                          <div style={{fontSize:"0.875rem",fontWeight:"500",color:post.sentiment > 0.7 ? "#34D399" : post.sentiment > 0.5 ? "#F59E0B" : "#EF4444"}}>{(post.sentiment * 100).toFixed(0)}%</div>
+                          <p style={{fontSize:"0.75rem",color:"#6b7280"}}>sentiment</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ==================== LEAKS ==================== */}
+            {activeTab === "leaks" && (
+              <div style={{display:"flex",flexDirection:"column",gap:"1rem"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"0.5rem",flexWrap:"wrap"}}>
+                  <span style={{fontSize:"0.875rem",color:"#9ca3af"}}>Sources:</span>
+                  {["All", "PokeBeach", "PokemonBlog", "Pokemon.com"].map(src => (
+                    <button key={src} style={{padding:"0.375rem 0.75rem",borderRadius:"0.5rem",fontSize:"0.875rem",background:"rgba(31,41,55,0.5)",border:"1px solid rgba(55,65,81,0.5)",color:"#d1d5db",cursor:"pointer"}}>{src}</button>
+                  ))}
+                </div>
+                {DEMO_LEAKS.map(leak => (
+                  <div key={leak.id} style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:"1rem"}}>
+                      <div style={{marginTop:"0.25rem",padding:"0.625rem",borderRadius:"0.75rem",background:leak.impact === "high" ? "rgba(239,68,68,0.1)" : leak.impact === "medium" ? "rgba(245,158,11,0.1)" : "rgba(31,41,55,1)",color:leak.impact === "high" ? "#EF4444" : leak.impact === "medium" ? "#F59E0B" : "#9ca3af"}}>
+                        <Icon name="newspaper" className="w-5 h-5" />
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"0.5rem"}}>
+                          <SourceBadge source={leak.source} /><ImpactBadge impact={leak.impact} />
+                          <span style={{fontSize:"0.75rem",color:"#6b7280",display:"flex",alignItems:"center",gap:"0.25rem"}}><Icon name="clock" className="w-3 h-3" />{leak.date}</span>
+                        </div>
+                        <h3 style={{fontWeight:"600",fontSize:"1.125rem"}}>{leak.title}</h3>
+                        <p style={{fontSize:"0.875rem",color:"#9ca3af",marginTop:"0.5rem"}}>{leak.summary}</p>
+                        <div style={{display:"flex",alignItems:"center",gap:"0.5rem",marginTop:"0.75rem"}}>
+                          <span style={{fontSize:"0.75rem",color:"#6b7280"}}>Related:</span>
+                          {leak.pokemon.map(p => <span key={p} style={{fontSize:"0.75rem",padding:"0.125rem 0.5rem",borderRadius:"9999px",background:"rgba(99,102,241,0.1)",color:"#818CF8",border:"1px solid rgba(99,102,241,0.2)"}}>{p}</span>)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ==================== WATCHLIST ==================== */}
+            {activeTab === "watchlist" && (
+              <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+                {watchlistCards.length === 0 ? (
+                  <div style={{background:"#111827",borderRadius:"1rem",padding:"4rem",border:"1px solid #1f2937",textAlign:"center"}}>
+                    <Icon name="star-off" className="w-12 h-12" style={{color:"#374151",margin:"0 auto 1rem"}} />
+                    <h3 style={{fontSize:"1.25rem",fontWeight:"600",color:"#9ca3af"}}>No cards in your watchlist</h3>
+                    <p style={{fontSize:"0.875rem",color:"#4b5563",marginTop:"0.5rem"}}>Add cards from the Alpha Scanner.</p>
+                    <button onClick={() => setActiveTab("scanner")} style={{marginTop:"1rem",padding:"0.5rem 1rem",background:"rgba(99,102,241,0.2)",color:"#818CF8",borderRadius:"0.75rem",border:"none",cursor:"pointer",fontSize:"0.875rem"}}>Go to Scanner</button>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:"1rem"}}>
+                      <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>Total Value</p>
+                        <p style={{fontSize:"1.5rem",fontWeight:"bold",marginTop:"0.25rem"}}>${watchlistCards.reduce((s, c) => s + c.pricing.currentPrice, 0).toFixed(2)}</p>
+                      </div>
+                      <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>Cards Tracked</p>
+                        <p style={{fontSize:"1.5rem",fontWeight:"bold",marginTop:"0.25rem"}}>{watchlistCards.length}</p>
+                      </div>
+                      <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>Avg Alpha Score</p>
+                        <p style={{fontSize:"1.5rem",fontWeight:"bold",marginTop:"0.25rem"}}>{Math.round(watchlistCards.reduce((s, c) => s + c.alpha.combined, 0) / watchlistCards.length)}</p>
+                      </div>
+                      <div style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937"}}>
+                        <p style={{fontSize:"0.75rem",color:"#6b7280"}}>Best Opportunity</p>
+                        <p style={{fontSize:"1rem",fontWeight:"bold",marginTop:"0.25rem"}}>{[...watchlistCards].sort((a, b) => b.alpha.combined - a.alpha.combined)[0]?.name}</p>
+                      </div>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:"1rem"}}>
+                      {watchlistCards.map(card => (
+                        <div key={card.id} onClick={() => setSelectedCard(card.id)}
+                          style={{background:"#111827",borderRadius:"1rem",padding:"1.25rem",border:"1px solid #1f2937",cursor:"pointer"}}>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:"0.75rem"}}>
+                              <span style={{fontSize:"1.875rem"}}>{card.image}</span>
+                              <div><p style={{fontWeight:"600"}}>{card.name}</p><p style={{fontSize:"0.75rem",color:"#6b7280"}}>{card.set}</p></div>
+                            </div>
+                            <button onClick={e => { e.stopPropagation(); toggleWatchlist(card.id); }} style={{color:"#F59E0B",background:"none",border:"none",cursor:"pointer",padding:"0.375rem",borderRadius:"0.5rem"}}><Icon name="star" className="w-4 h-4" /></button>
+                          </div>
+                          <div style={{height:"6rem",marginBottom:"0.75rem"}}>
+                            <SimpleSparkline data={card.priceHistory.slice(-30)} dataKey="tcgplayer" color={card.pricing.currentPrice < card.pricing.avg30d ? "#EF4444" : "#34D399"} />
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                            <div>
+                              <p style={{fontSize:"1.125rem",fontWeight:"bold"}}>${card.pricing.currentPrice.toFixed(2)}</p>
+                              <PriceChange current={card.pricing.currentPrice} previous={card.pricing.avg30d} />
+                            </div>
+                            <ScoreBadge score={card.alpha.combined} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </main>
+
+          <footer style={{borderTop:"1px solid rgba(31,41,55,0.5)",marginTop:"3rem"}}>
+            <div style={{maxWidth:"80rem",margin:"0 auto",padding:"1rem 1.5rem",display:"flex",justifyContent:"space-between",fontSize:"0.75rem",color:"#4b5563"}}>
+              <span>PokéAlpha · TCG Market Intelligence</span>
+              <span>USA/NA Pricing · TCGPlayer · eBay Sold · PriceCharting (Graded) · Reddit · PokeBeach · PokemonBlog</span>
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<PokemonTCGAlpha />, document.getElementById("root"));
+  </script>
+</body>
+</html>
